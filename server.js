@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 3000;
 const srv = http.createServer((q, r) => {
   if (q.url.split('?')[0] === '/') {
     r.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    r.end(fs.readFileSync(path.join(__dirname, 'index.html')));
+    r.end(fs.readFileSync(path.join(__dirname, fs.readdirSync(__dirname).find(n => n.toLowerCase().endsWith('.html')))));
   } else { r.writeHead(404); r.end(); }
 });
 const wss = new WebSocketServer({ server: srv });
