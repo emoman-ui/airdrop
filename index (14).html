@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airdrop</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#14171c;--mut:#6b7380;--ac:#2f7bff;--bd:#e1e4e9;--ok:#1fa35b;--er:#e5484d}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b21;--tx:#e8eaee;--mut:#8b93a1;--ac:#4d8dff;--bd:#2a2e37;--ok:#3ccf82;--er:#ff6369}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:720px;margin:0 auto;padding:24px 16px}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+h1{font-size:22px;margin:0}
+.m{color:var(--mut);font-size:13px}
+#me{cursor:pointer;border-bottom:1px dashed var(--mut)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:14px}
+.card h2{font-size:13px;margin:0 0 12px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+#peers{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.peer{border:2px dashed var(--bd);border-radius:14px;padding:16px 8px;text-align:center;cursor:pointer;transition:.15s;word-break:break-word}
+.peer:hover,.peer.on{border-color:var(--ac);background:color-mix(in srgb,var(--ac) 8%,transparent)}
+.av{width:46px;height:46px;border-radius:50%;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:20px;margin:0 auto 8px}
+.it{padding:10px 0;border-top:1px solid var(--bd)}
+.it:first-child{border-top:0}
+.t{display:flex;justify-content:space-between;gap:8px}
+.bar{height:5px;border-radius:5px;background:var(--bd);margin:6px 0 4px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--ac)}
+button{background:var(--ac);color:#fff;border:0;border-radius:10px;padding:9px 16px;font:inherit;cursor:pointer}
+button.g{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+a.dl{color:var(--ac);margin-left:6px}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px}
+.box{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:20px;max-width:420px;width:100%}
+.box h3{margin:0 0 10px;font-size:17px}
+.box ul{margin:0 0 14px;padding-left:18px;max-height:160px;overflow:auto;color:var(--mut);font-size:13px;word-break:break-all}
+.row{display:flex;gap:8px}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Airdrop</h1>
+  <span class="m">sen: <span id="me" title="adı değiştir"></span><span id="rm"></span></span>
+</header>
+<div class="card">
+  <h2>Çevredeki cihazlar</h2>
+  <div id="peers"></div>
+</div>
+<div class="card">
+  <h2>Aktarımlar</h2>
+  <div id="list"><span class="m" id="none">henüz yok</span></div>
+</div>
+</main>
+<input id="pick" type="file" multiple hidden>
+<div id="modal" class="hide"><div class="box">
+  <h3 id="mt"></h3><ul id="ml"></ul><p class="m" id="mn"></p>
+  <div class="row"><button id="yes">Kabul et</button><button id="no" class="g">Reddet</button></div>
+</div></div>
+
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+const CH=64*1024, HI=8<<20;
+const room=new URLSearchParams(location.search).get('oda')||'';
+const A=['Mavi','Kızıl','Sessiz','Hızlı','Tatlı','Yaban'],B=['Kaplan','Şahin','Panda','Tilki','Yunus','Kartal'];
+const rnd=a=>a[Math.random()*a.length|0], rid=()=>Math.random().toString(36).slice(2,10);
+let me='';try{me=localStorage.getItem('ad_name')||''}catch(e){}
+if(!me){me=rnd(A)+' '+rnd(B);try{localStorage.setItem('ad_name',me)}catch(e){}}
+const fmt=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':n<1073741824?(n/1048576).toFixed(1)+' MB':(n/1073741824).toFixed(2)+' GB';
+
+let ws,peers=new Map(),sessions=new Map(),inbox=[];
+const send=o=>ws&&ws.readyState===1&&ws.send(JSON.stringify(o));
+
+$('me').textContent=me;
+if(room)$('rm').textContent=' · oda: '+room;
+$('me').onclick=()=>{const n=(prompt('cihaz adı',me)||'').trim().slice(0,24);if(!n)return;me=n;$('me').textContent=n;try{localStorage.setItem('ad_name',n)}catch(e){}send({t:'hello',name:n})};
+
+function connect(){
+  ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+(room?'/?oda='+encodeURIComponent(room):''));
+  ws.onopen=()=>send({t:'hello',name:me});
+  ws.onclose=()=>{peers.clear();render();setTimeout(connect,1500)};
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.t==='init'){peers=new Map(m.peers.map(p=>[p.id,p.name]));render()}
+    else if(m.t==='peer'){peers.set(m.id,m.name);render()}
+    else if(m.t==='gone'){peers.delete(m.id);render();gone(m.id)}
+    else if(m.t==='req'){inbox.push(m);modal()}
+    else if(m.t==='res'){onRes(m)}
+    else if(m.t==='sig'){onSig(m)}
+  };
+}
+
+function render(){
+  const g=$('peers');g.innerHTML='';
+  if(!peers.size){const p=document.createElement('p');p.className='m';p.textContent='çevrede cihaz yok. aynı ağdaki diğer cihazda bu linki aç.';g.append(p);return}
+  for(const [id,name] of peers){
+    const c=document.createElement('div');c.className='peer';
+    const av=document.createElement('div');av.className='av';av.textContent=[...name][0]||'?';
+    const n=document.createElement('div');n.textContent=name;
+    c.append(av,n);
+    c.onclick=()=>{const i=$('pick');i.onchange=()=>{sendTo(id,[...i.files]);i.value=''};i.click()};
+    c.ondragover=e=>{e.preventDefault();c.classList.add('on')};
+    c.ondragleave=()=>c.classList.remove('on');
+    c.ondrop=e=>{e.preventDefault();c.classList.remove('on');sendTo(id,[...e.dataTransfer.files])};
+    g.append(c);
+  }
+}
+
+// ---------- ui helpers
+function tui(s,title){
+  const none=$('none');if(none)none.remove();
+  const d=document.createElement('div');d.className='it';
+  d.innerHTML='<div class="t"><b></b><span class="m st"></span></div><div class="bar"><i></i></div><div class="m sp"></div>';
+  s.ui={el:d,st:d.querySelector('.st'),bar:d.querySelector('i'),sp:d.querySelector('.sp')};
+  d.querySelector('b').textContent=title;
+  $('list').prepend(d);
+}
+const stat=(s,t)=>{s.ui.st.textContent=t};
+function prog(s,force){
+  const n=performance.now();if(!force&&n-(s.pt||0)<120)return;s.pt=n;
+  const b=s.role==='tx'?s.sent:s.recv;
+  s.ui.bar.style.width=(s.total?b/s.total*100:100)+'%';
+  s.ui.sp.textContent=fmt(b)+' / '+fmt(s.total)+' · '+fmt(b/(((n-s.t0)/1000)||1))+'/s';
+}
+function fail(s,msg){if(s.done)return;s.done=true;stat(s,msg);try{s.pc&&s.pc.close()}catch(e){}}
+function gone(id){
+  for(const s of sessions.values())if(s.peer===id)fail(s,'cihaz ayrıldı');
+  inbox=inbox.filter(r=>r.from!==id);modal();
+}
+
+// ---------- send side
+function sendTo(id,files){
+  if(!files.length)return;
+  const s={sid:rid(),peer:id,role:'tx',files,sent:0,total:files.reduce((a,f)=>a+f.size,0),t0:performance.now()};
+  sessions.set(s.sid,s);
+  tui(s,'→ '+(peers.get(id)||'cihaz')+' · '+files.length+' dosya');
+  stat(s,'onay bekleniyor');
+  send({t:'req',to:id,sid:s.sid,files:files.map(f=>({name:f.name,size:f.size,type:f.type}))});
+}
+function onRes(m){
+  const s=sessions.get(m.sid);if(!s||s.role!=='tx')return;
+  if(!m.ok){s.done=true;stat(s,'reddedildi');return}
+  stat(s,'bağlanıyor');startTx(s);
+}
+function rtc(s){
+  const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+  s.pc=pc;
+  pc.onicecandidate=e=>e.candidate&&send({t:'sig',to:s.peer,sid:s.sid,d:{c:e.candidate}});
+  pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed'||pc.connectionState==='disconnected')fail(s,'bağlantı koptu')};
+  return pc;
+}
+async function startTx(s){
+  const pc=rtc(s),dc=pc.createDataChannel('f');
+  s.dc=dc;dc.binaryType='arraybuffer';dc.bufferedAmountLowThreshold=1<<20;
+  dc.onopen=()=>pumpTx(s);
+  await pc.setLocalDescription(await pc.createOffer());
+  send({t:'sig',to:s.peer,sid:s.sid,d:{sdp:pc.localDescription}});
+}
+async function pumpTx(s){
+  const dc=s.dc;s.t0=performance.now();stat(s,'gönderiliyor');
+  for(let i=0;i<s.files.length;i++){
+    const f=s.files[i];
+    dc.send(JSON.stringify({t:'meta',name:f.name,size:f.size}));
+    let off=0;
+    while(off<f.size){
+      if(dc.bufferedAmount>HI)await new Promise(r=>{dc.onbufferedamountlow=()=>{dc.onbufferedamountlow=null;r()}});
+      if(dc.readyState!=='open'||s.done)return;
+      const b=await f.slice(off,off+CH).arrayBuffer();
+      dc.send(b);off+=b.byteLength;s.sent+=b.byteLength;prog(s);
+    }
+    dc.send(JSON.stringify({t:'end'}));
+  }
+  dc.send(JSON.stringify({t:'done'}));
+  while(dc.bufferedAmount>0&&dc.readyState==='open')await new Promise(r=>setTimeout(r,100));
+  s.done=true;prog(s,true);stat(s,'tamamlandı');
+}
+
+// ---------- receive side
+function kindOf(fs){
+  if(fs.every(f=>f.type.startsWith('image/')))return 'resim';
+  if(fs.every(f=>f.type.startsWith('video/')))return 'video';
+  if(fs.every(f=>/^(image|video)\//.test(f.type)))return 'resim/video';
+  return 'dosya';
+}
+function modal(){
+  const r=inbox[0],m=$('modal');
+  if(!r){m.classList.add('hide');return}
+  const tot=r.files.reduce((a,f)=>a+f.size,0);
+  $('mt').textContent=(peers.get(r.from)||'bir cihaz')+' kullanıcısının '+kindOf(r.files)+' gönderme isteği';
+  const ul=$('ml');ul.innerHTML='';
+  r.files.slice(0,50).forEach(f=>{const li=document.createElement('li');li.textContent=f.name+' · '+fmt(f.size);ul.append(li)});
+  $('mn').textContent=r.files.length+' dosya · '+fmt(tot)+(window.showDirectoryPicker?' · kabul edince kaydedilecek klasörü seçeceksin, dosyalar direkt diske yazılır':' · bu tarayıcı/bağlantıda dosyalar RAM\'de toplanır, çok büyük dosyalar için Chrome/Edge + https ya da localhost kullan');
+  m.classList.remove('hide');
+}
+$('no').onclick=()=>{const r=inbox.shift();if(r)send({t:'res',to:r.from,sid:r.sid,ok:false});modal()};
+$('yes').onclick=async()=>{
+  const r=inbox[0];if(!r)return;
+  let dir=null;
+  if(window.showDirectoryPicker){try{dir=await showDirectoryPicker({mode:'readwrite'})}catch(e){return}}
+  inbox.shift();
+  const s={sid:r.sid,peer:r.from,role:'rx',dir,recv:0,total:r.files.reduce((a,f)=>a+f.size,0),t0:performance.now(),rq:Promise.resolve()};
+  sessions.set(s.sid,s);
+  tui(s,'← '+(peers.get(r.from)||'cihaz')+' · '+r.files.length+' dosya');
+  stat(s,'bağlanıyor');
+  send({t:'res',to:r.from,sid:r.sid,ok:true});
+  modal();
+};
+async function freeName(dir,name){
+  name=name.replace(/[\\/:*?"<>|]/g,'_');
+  const dot=name.lastIndexOf('.'),b=dot>0?name.slice(0,dot):name,e=dot>0?name.slice(dot):'';
+  let n=name,i=1;
+  for(;;){try{await dir.getFileHandle(n);n=b+' ('+i+++')'+e}catch(x){return n}}
+}
+async function rx(s,d){
+  if(typeof d==='string'){
+    const m=JSON.parse(d);
+    if(m.t==='meta'){
+      s.cur={name:m.name,size:m.size};
+      if(s.dir){const h=await s.dir.getFileHandle(await freeName(s.dir,m.name),{create:true});s.cur.w=await h.createWritable()}
+      else s.cur.parts=[];
+      stat(s,'alınıyor');
+    }else if(m.t==='end'){
+      const c=s.cur;
+      if(c.w)await c.w.close();
+      else{
+        const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(c.parts));a.download=c.name;a.textContent=c.name;a.className='dl';
+        s.ui.sp.append(' ',a);a.click();
+      }
+      s.cur=null;
+    }else if(m.t==='done'){
+      s.done=true;prog(s,true);stat(s,'tamamlandı');
+      try{s.pc.close()}catch(e){}
+    }
+    return;
+  }
+  const c=s.cur;if(!c)return;
+  if(c.w)await c.w.write(d);else c.parts.push(d);
+  s.recv+=d.byteLength;prog(s);
+}
+
+// ---------- signaling
+function onSig(m){
+  const s=sessions.get(m.sid);if(!s||s.done)return;
+  s.q=(s.q||Promise.resolve()).then(async()=>{
+    let pc=s.pc;
+    if(!pc&&s.role==='rx'){
+      pc=rtc(s);
+      pc.ondatachannel=e=>{const dc=e.channel;s.dc=dc;dc.binaryType='arraybuffer';dc.onmessage=ev=>{s.rq=s.rq.then(()=>rx(s,ev.data)).catch(()=>fail(s,'yazma hatası'))}};
+    }
+    if(!pc)return;
+    if(m.d.sdp){
+      await pc.setRemoteDescription(m.d.sdp);
+      if(m.d.sdp.type==='offer'){
+        await pc.setLocalDescription(await pc.createAnswer());
+        send({t:'sig',to:s.peer,sid:s.sid,d:{sdp:pc.localDescription}});
+      }
+    }else if(m.d.c){try{await pc.addIceCandidate(m.d.c)}catch(e){}}
+  });
+}
+
+connect();
+})();
+</script>
+</body>
+</html>
